@@ -1,7 +1,9 @@
-pysqlite3-binary
 streamlit==1.38.0
-openai==1.35.0
-chromadb==0.4.24
-crewai==0.51.1
-crewai-tools==0.4.26
+openai==1.51.2
+httpx==0.27.0
+chromadb==0.5.5
+pysqlite3-binary==0.5.4
+crewai==0.67.1
+crewai-tools==0.12.1
 python-dotenv==1.0.1
+pydantic==2.9.2
