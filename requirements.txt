@@ -4,6 +4,6 @@ httpx
 chromadb
 pysqlite3-binary
 crewai
-crewai-tools
+crewai-tools==0.3.5
 python-dotenv
 pydantic
