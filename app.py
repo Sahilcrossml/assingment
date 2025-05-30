@@ -1,38 +1,35 @@
-import sys
-import pysqlite3
-
-# Override default sqlite3 with pysqlite3 for compatibility
-sys.modules["sqlite3"] = pysqlite3
-
 import streamlit as st
 import warnings
-import hashlib
-import time
-import os
-import re
-from openai import OpenAI
-import chromadb
-from crewai import Agent, Task, Crew
-from crewai_tools import ScrapeWebsiteTool
-
 warnings.filterwarnings('ignore')
 
-# Initialize ChromaDB Persistent Client
-chroma_client = chromadb.PersistentClient(path="./chroma_db")
+from openai import OpenAI
+try:
+    import chromadb
+except ImportError as e:
+    st.error(f"Failed to import chromadb. Please ensure all dependencies are installed: {str(e)}")
+    st.stop()
 
+from crewai import Agent, Task, Crew
+from crewai_tools import ScrapeWebsiteTool
+import os
+import re
 
 # Confirm frontend is loading
-st.write("✅ Streamlit is running! Please enter a URL below.")
+st.write("Streamlit is running! Please enter a URL below.")
 
 # Check for OpenAI API key
 if not os.getenv("OPENAI_API_KEY"):
-    st.error("❌ OpenAI API key not found. Please set the OPENAI_API_KEY environment variable.")
+    st.error("OpenAI API key not found. Please set the OPENAI_API_KEY environment variable.")
     st.stop()
 
-# Initialize OpenAI client
+# Initialize OpenAI and ChromaDB clients
 openai_client = OpenAI()
+try:
+    chroma_client = chromadb.Client()
+except Exception as e:
+    st.error(f"Failed to initialize ChromaDB client: {str(e)}")
+    st.stop()
 
-# Utility: Create embedding
 def create_embedding(text: str):
     try:
         response = openai_client.embeddings.create(
@@ -44,14 +41,13 @@ def create_embedding(text: str):
         st.error(f"Error creating embedding: {str(e)}")
         return None
 
-# Utility: Get or create ChromaDB collection
 def get_collection(name):
     return chroma_client.get_or_create_collection(name=name)
 
-# Utility: Add content to collection if not already present
 def add_data_to_collection(collection, doc_id, document, embedding):
     if embedding is None:
         return
+    # Check if already added to avoid duplicates
     if doc_id not in collection.get()['ids']:
         collection.add(
             documents=[document],
@@ -60,7 +56,6 @@ def add_data_to_collection(collection, doc_id, document, embedding):
             ids=[doc_id]
         )
 
-# Utility: Query relevant context
 def query_relevant_context(collection, user_query: str, top_k=1):
     try:
         query_embedding = create_embedding(user_query)
@@ -78,7 +73,6 @@ def query_relevant_context(collection, user_query: str, top_k=1):
         st.error(f"Error querying context: {str(e)}")
         return ""
 
-# Utility: Run CrewAI with context
 def run_crew(customer, person, inquiry, context):
     Support_agent = Agent(
         role="Senior Support Representative",
@@ -109,46 +103,43 @@ def run_crew(customer, person, inquiry, context):
         st.error(f"CrewAI error: {str(e)}")
         return None
 
-# Streamlit UI
 st.title("🛠️ Dynamic Support Assistant with URL Input")
 
 # Step 1: User inputs the URL
-url = st.text_input("Step 1: Enter the URL to scrape (e.g., https://tailordthreads.myshopify.com/pages/privacy-policy)")
+url = st.text_input("Step 1: Enter the URL to scrape (e.g., https://tailordthreads.myshopify.com/pages/privacy_policy)")
 
 if url:
+    # Show a button to confirm URL scraping
     if st.button("Scrape and Embed Content"):
         with st.spinner(f"Scraping {url} and creating embeddings..."):
             try:
                 scraper = ScrapeWebsiteTool(website_url=url)
                 scraped_text = scraper.run()
-
-                if not scraped_text:
-                    st.error("❌ Failed to scrape content from the provided URL.")
+                if not scraped_text or "404 Page not found" in scraped_text:
+                    st.error("The provided URL returned a 404 Page Not Found error. Please check the URL (e.g., use 'privacy_policy' instead of 'privacy-policy').")
                 else:
-                    st.success(f"✅ Scraped {len(scraped_text)} characters from the page!")
-                    st.write("🧪 First 500 characters:", scraped_text[:500])
-
+                    st.success(f"Scraped {len(scraped_text)} characters from the page!")
+                    st.write("Debug: First 500 characters of scraped text:", scraped_text[:500])
                     embedding = create_embedding(scraped_text)
                     if embedding:
-                        # Generate unique collection name using hash and timestamp
-                        url_hash = hashlib.md5(url.encode()).hexdigest()
-                        timestamp = int(time.time())
-                        collection_name = f"{url_hash}_{timestamp}"
-
+                        # Enhanced sanitization: replace non-alphanumeric characters (except underscores and hyphens) with underscores
+                        # Ensure starts and ends with alphanumeric
+                        raw_name = re.sub(r'[^a-zA-Z0-9_-]', '_', url.replace("https://", ""))
+                        collection_name = f"c_{raw_name[:48]}" if raw_name[0] in ['_', '-'] else raw_name[:50]
+                        if not collection_name[-1].isalnum():
+                            collection_name = collection_name[:-1] + 'c'
+                        if len(collection_name) < 3:
+                            collection_name = collection_name + 'c' * (3 - len(collection_name))
                         collection = get_collection(collection_name)
                         add_data_to_collection(collection, doc_id="page_1", document=scraped_text, embedding=embedding)
-
-                        # Save state
                         st.session_state['collection_name'] = collection_name
                         st.session_state['scraped_text'] = scraped_text
-
-                        st.success(f"📦 Content stored in collection: `{collection_name}`")
+                        st.write("Debug: Collection name:", collection_name)
                     else:
-                        st.error("❌ Failed to create embedding for scraped text.")
+                        st.error("Failed to create embedding for scraped text.")
             except Exception as e:
                 st.error(f"Error scraping or embedding: {str(e)}")
 
-# Step 2: Ask a question
 if 'collection_name' in st.session_state:
     st.write("### Step 2: Ask your question based on the scraped content")
 
@@ -157,20 +148,18 @@ if 'collection_name' in st.session_state:
 
     if st.button("Get Answer"):
         if not user_question.strip():
-            st.warning("⚠️ Please enter a question.")
+            st.warning("Please enter a question.")
         else:
             with st.spinner("Generating response..."):
                 try:
                     collection = get_collection(st.session_state['collection_name'])
-                    context = query_relevant_context(collection, user_question)
-
-                    st.write("📖 Retrieved Context (first 500 characters):", context[:500] if context else "No context retrieved.")
-
+                    context = query_relevant_context(collection, user_query=user_question)
+                    st.write("Debug: Retrieved Context (first 500 characters):", context[:500] if context else "No context retrieved")
                     result = run_crew(customer_name, "bot", user_question, context)
                     if result:
-                        st.write("#### 💬 Response")
-                        st.markdown(result.tasks_output[0].raw)
+                        st.write("#### Response")
+                        st.markdown(result.tasks_output[0].raw)  # Display only the support response as formatted text
                     else:
-                        st.error("❌ Failed to generate a response.")
+                        st.error("Failed to generate a response.")
                 except Exception as e:
                     st.error(f"Error generating response: {str(e)}")
