@@ -1,4 +1,8 @@
+import sys
+import pysqlite3
 
+# Override the default sqlite3 with pysqlite3
+sys.modules["sqlite3"] = pysqlite3
 import streamlit as st
 import warnings
 warnings.filterwarnings('ignore')
