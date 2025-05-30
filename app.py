@@ -3,6 +3,16 @@ import warnings
 warnings.filterwarnings('ignore')
 
 from openai import OpenAI
+import sys
+
+# Use pysqlite3 to replace sqlite3 for ChromaDB compatibility
+try:
+    __import__('pysqlite3')
+    sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
+except ImportError as e:
+    st.error(f"Failed to import pysqlite3. Please ensure pysqlite3-binary is installed: {str(e)}")
+    st.stop()
+
 try:
     import chromadb
 except ImportError as e:
