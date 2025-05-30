@@ -20,6 +20,7 @@ warnings.filterwarnings('ignore')
 # Initialize ChromaDB Persistent Client
 chroma_client = chromadb.PersistentClient(path="./chroma_db")
 
+
 # Confirm frontend is loading
 st.write("✅ Streamlit is running! Please enter a URL below.")
 
@@ -29,7 +30,7 @@ if not os.getenv("OPENAI_API_KEY"):
     st.stop()
 
 # Initialize OpenAI client
-openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+openai_client = OpenAI()
 
 # Utility: Create embedding
 def create_embedding(text: str):
