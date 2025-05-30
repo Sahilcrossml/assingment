@@ -1,8 +1,3 @@
-import sys
-import pysqlite3
-
-# Override the default sqlite3 with pysqlite3
-sys.modules["sqlite3"] = pysqlite3
 import streamlit as st
 import warnings
 warnings.filterwarnings('ignore')
@@ -12,7 +7,6 @@ import chromadb
 from crewai import Agent, Task, Crew
 from crewai_tools import ScrapeWebsiteTool
 import os
-import re
 
 # Confirm frontend is loading
 st.write("Streamlit is running! Please enter a URL below.")
@@ -78,31 +72,42 @@ def run_crew(customer, person, inquiry, context):
         verbose=True
     )
 
+    QA_agent = Agent(
+        role="Support Quality Assurance Specialist",
+        goal="Ensure support quality is excellent.",
+        backstory=f"You are reviewing the support response for {customer}.",
+        verbose=True
+    )
+
     inquiry_task = Task(
         description=(
-            f"Answer the following question from {customer}: '{inquiry}' using the provided context:\n{context}"
+            f"{customer} just asked: '{inquiry}'\n\nUse this context:\n{context}"
         ),
         expected_output="A short, helpful response to the customer inquiry.",
         agent=Support_agent
     )
 
+    qa_task = Task(
+        description=(
+            f"Review the response given for the inquiry: '{inquiry}'"
+        ),
+        expected_output="Detailed QA review of the response, confirming its accuracy and tone.",
+        agent=QA_agent
+    )
+
     crew = Crew(
-        agents=[Support_agent],
-        tasks=[inquiry_task],
+        agents=[Support_agent, QA_agent],
+        tasks=[inquiry_task, qa_task],
         verbose=True,
         memory=True
     )
 
-    try:
-        return crew.kickoff(inputs={"customer": customer, "person": person, "inquiry": inquiry, "context": context})
-    except Exception as e:
-        st.error(f"CrewAI error: {str(e)}")
-        return None
+    return crew.kickoff(inputs={"customer": customer, "person": person, "inquiry": inquiry})
 
 st.title("🛠️ Dynamic Support Assistant with URL Input")
 
 # Step 1: User inputs the URL
-url = st.text_input("Step 1: Enter the URL to scrape (e.g., https://tailordthreads.myshopify.com/pages/privacy-policy)")
+url = st.text_input("Step 1: Enter the URL to scrape (e.g., https://tailordthreads.myshopify.com/collections/all)")
 
 if url:
     # Show a button to confirm URL scraping
@@ -118,13 +123,11 @@ if url:
                     st.write("Debug: First 500 characters of scraped text:", scraped_text[:500])
                     embedding = create_embedding(scraped_text)
                     if embedding:
-                        # Enhanced sanitization: replace non-alphanumeric characters (except underscores and hyphens) with underscores
-                        collection_name = re.sub(r'[^a-zA-Z0-9_-]', '_', url.replace("https://", "")[:50])
+                        collection_name = url.replace("https://", "").replace("/", "_")[:50]  # Sanitize name
                         collection = get_collection(collection_name)
                         add_data_to_collection(collection, doc_id="page_1", document=scraped_text, embedding=embedding)
                         st.session_state['collection_name'] = collection_name
                         st.session_state['scraped_text'] = scraped_text
-                        st.write("Debug: Collection name:", collection_name)
                     else:
                         st.error("Failed to create embedding for scraped text.")
             except Exception as e:
@@ -146,10 +149,11 @@ if 'collection_name' in st.session_state:
                     context = query_relevant_context(collection, user_question)
                     st.write("Debug: Retrieved Context (first 500 characters):", context[:500] if context else "No context retrieved")
                     result = run_crew(customer_name, "bot", user_question, context)
-                    if result:
-                        st.write("#### Response")
-                        st.markdown(result.tasks_output[0].raw)  # Display only the support response as formatted text
-                    else:
-                        st.error("Failed to generate a response.")
+                    st.write("#### Support Assistant Response")
+                    st.markdown(result.tasks_output[0].raw)  # Display support response as formatted text
+                    st.write("#### QA Review")
+                    st.markdown(result.tasks_output[1].raw)  # Display QA review as formatted text
+                    st.write("#### Full JSON Response (for debugging)")
+                    st.json(result)  # Keep JSON for reference
                 except Exception as e:
                     st.error(f"Error generating response: {str(e)}")
